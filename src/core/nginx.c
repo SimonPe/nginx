@@ -427,13 +427,49 @@ static ngx_int_t
 ngx_add_inherited_sockets(ngx_cycle_t *cycle)
 {
     u_char           *p, *v, *inherited;
-    ngx_int_t         s;
+    ngx_int_t         s, n;
     ngx_listening_t  *ls;
 
     inherited = (u_char *) getenv(NGINX_VAR);
 
     if (inherited == NULL) {
-        return NGX_OK;
+        inherited = (u_char *) getenv("LISTEN_FDS");
+
+        if (inherited == NULL) {
+            return NGX_OK;
+        }
+
+        ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0,
+                      "using %s sockets from systemd", inherited);
+
+        if (ngx_array_init(&cycle->listening, cycle->pool, 10,
+                           sizeof(ngx_listening_t))
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
+
+        n = ngx_atoi(inherited, ngx_strlen(inherited));
+        if (n == NGX_ERROR) {
+            ngx_log_error(NGX_LOG_EMERG, cycle->log, 0,
+                          "invalid number of sockets \"%s\" in LISTEN_FDS"
+                          " environment variable, ignoring the rest"
+                          " of the variable", inherited);
+            return NGX_OK;
+        }
+
+        for (s = 3; s < 3 + n; s++) {
+            ls = ngx_array_push(&cycle->listening);
+            if (ls == NULL) {
+                return NGX_ERROR;
+            }
+
+            ngx_memzero(ls, sizeof(ngx_listening_t));
+
+            ls->fd = (ngx_socket_t) s;
+        }
+
+        return ngx_set_inherited_sockets(cycle);
     }
 
     ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0,
